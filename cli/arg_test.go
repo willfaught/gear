@@ -8,8 +8,8 @@ import (
 func TestPrintDefaults(t *testing.T) {
 	var l ArgList
 	l.Flags.Init("terraform", 0)
-	l.String("a", "aa", "test arg")
-	l.String("test", "bb", "test arg")
+	// l.String("x", "aa", "test arg")
+	// l.String("test", "bb", "test arg")
 	l.String("about", "cc", "test arg")
 	l.Flags.String("g", "gg", "test flag")
 	l.Flags.String("h", "hh", "test flag")

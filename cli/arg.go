@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -17,10 +19,12 @@ type Arg struct {
 }
 
 type ArgList struct {
-	Flags flag.FlagSet
-	Usage func()
-	args  map[string]*Arg
-	order []*Arg
+	Usage    func()
+	args     map[string]*Arg
+	handling ErrorHandling
+	name     string
+	order    []*Arg
+	output   io.Writer
 }
 
 func (l *ArgList) handleError(err error) error {
@@ -97,6 +101,28 @@ func unquoteUsage(a *Arg) (name string, usage string) {
 	return
 }
 
+func isZeroValue(a *Arg, value string) bool {
+	// Build a zero value of the flag's Value type, and see if the
+	// result of calling its String method equals the value passed in.
+	// This works unless the Value type is itself an interface type.
+	typ := reflect.TypeOf(a.Value)
+	var z reflect.Value
+	if typ.Kind() == reflect.Ptr {
+		z = reflect.New(typ.Elem())
+	} else {
+		z = reflect.Zero(typ)
+	}
+	if value == z.Interface().(ArgValue).String() {
+		return true
+	}
+
+	switch value {
+	case "false", "", "0":
+		return true
+	}
+	return false
+}
+
 func (l *ArgList) PrintDefaults() {
 	var output = l.Flags.Output()
 	for _, a := range l.order {
@@ -111,14 +137,13 @@ func (l *ArgList) PrintDefaults() {
 			s += "\n    \t"
 		}
 		s += strings.Replace(usage, "\n", "\n    \t", -1)
-		// if !isZeroValue(a, a.Default) {
-		// 	if _, ok := flag.Value.(*stringValue); ok {
-		// 		// put quotes on the value
-		// 		s += fmt.Sprintf(" (default %q)", a.Default)
-		// 	} else {
-		// 		s += fmt.Sprintf(" (default %v)", a.Default)
-		// 	}
-		// }
+		if !isZeroValue(a, a.Default) {
+			if _, ok := a.Value.(*stringArgValue); ok {
+				s += fmt.Sprintf(" (default %q)", a.Default)
+			} else {
+				s += fmt.Sprintf(" (default %v)", a.Default)
+			}
+		}
 		fmt.Fprint(output, s, "\n")
 	}
 }
@@ -155,18 +180,15 @@ func (l *ArgList) Var(value ArgValue, name string, usage string) {
 }
 
 func (l *ArgList) defaultUsage() {
-	var b = bytes.NewBufferString("Usage: ")
+	var b = bytes.NewBufferString("Usage:")
 	if n := l.Flags.Name(); n != "" {
-		b.WriteString(n + " ")
+		b.WriteString(" " + n)
 	}
 	if l.Flags.NFlag() > 0 {
-		b.WriteString("[<options>] ")
+		b.WriteString(" [options]")
 	}
-	for i, a := range l.order {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		b.WriteString(a.Name)
+	if len(l.args) > 0 {
+		b.WriteString(" [arguments]")
 	}
 	var output = l.Flags.Output()
 	fmt.Fprintln(output, b.String())
@@ -193,6 +215,14 @@ type ArgValue interface {
 	String() string
 	Set(string) error
 }
+
+type ErrorHandling int
+
+const (
+	ContinueOnError ErrorHandling = iota // Return a descriptive error.
+	ExitOnError                          // Call os.Exit(2).
+	PanicOnError                         // Call panic with a descriptive error.
+)
 
 type float64ArgValue float64
 
